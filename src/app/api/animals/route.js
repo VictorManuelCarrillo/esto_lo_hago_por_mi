@@ -1,36 +1,104 @@
-import { connectDB } from '@/utils/mongoose';
-import Animal from '@/models/Animal';
+// Next response
+import { NextResponse } from 'next/server'
+// Node system
+import path from 'path'
+import { writeFile } from 'fs/promises'
+// MongoDB
+import { connectDB } from '@/utils/mongoose'
+// DatabaseModel
+import Animal from '@/models/Animal'
+// Cloudinary
+import cloudinary from '@/utils/cloudinary'
 
-cloudinary.config({
-  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-  api_key: process.env.CLOUDINARY_API_KEY,
-  api_secret: process.env.CLOUDINARY_API_SECRET,
-});
+//# GET all animals ______________________________________________________ #>
+export async function GET() {
+  // connect whit mongoDB database
+  await connectDB()
 
-connectDB();
+  const animals = await Animal.find()
+  return NextResponse.json(animals)
+}
 
-export default async function handler(req, res) {
-  const { method, body } = req;
+//? Auxiliar function for extract values from formData ___________________ ?>
+function getValues(formData) {
+  const title = formData.get('title')
+  const description = formData.get('description')
 
-  switch (method) {
-    case 'GET':
-      try {
-        const animals = await Animal.find();
-        return res.status(200).json(animals);
-      } catch (error) {
-        return res.status(500).json({ error: error.message });
-      }
+  return { title, description }
+}
 
-    case 'POST':
-    try {
-      const newAnimal = new Animal(body);
-      const savedAnimal = await newAnimal.save();
-      return res.status(201).json(savedAnimal);
-    } catch (error) {
-      return res.status(500).json({ error: error.message });
-    }
+//# POST (CREATE) new animal _____________________________________________ #>
+export async function POST(request) {
+  // creating variable filePath for save image in a file
+  let filePath
+  try {
+    // connect whit mongoDB database
+    await connectDB()
+  } catch (error) {
+    console.error('Error al conectar con la base de datos MongoDB:', error)
+    return NextResponse.json(
+      {
+        message: 'Error al conectar con la base de datos MongoDB',
+      },
+      { status: 500 }
+    )
+  }
+  const data = await request.formData()
 
-    default:
-      return res.status(400).json({ msg: 'This method is not supported...' });
+  // extract image value
+  const image = data.get('image')
+  // extract the rest o values
+  const { title, description } = getValues(data)
+
+  //handle errors
+  if (!image || !title || !description) {
+    return NextResponse.json(
+      { message: 'required information is missing' },
+      { status: 400 }
+    )
+  }
+
+  // create image Buffer for upload
+  const bytes = await image.arrayBuffer()
+  const buffer = Buffer.from(bytes)
+
+  try {
+    // save image in a file
+    filePath = path.join(process.cwd(), 'public/images/upload', image.name)
+    await writeFile(filePath, buffer)
+  } catch (error) {
+    console.error('Error al guardar la imagen en el servidor:', error)
+    return NextResponse.json(
+      {
+        message: 'Error al guardar la imagen en el servidor',
+      },
+      { status: 500 }
+    )
+  }
+
+  try {
+    // upload image to Cloudinary
+    const response = await cloudinary.uploader.upload(filePath)
+    console.log(response)
+
+    // save Animal in database
+    const newAnimal = new Animal({
+      title,
+      description,
+      imageUrl: response.secure_url,
+    })
+    await newAnimal.save()
+
+    return NextResponse.json({
+      message: 'Imagen subida y datos guardados en MongoDB',
+    })
+  } catch (error) {
+    console.error('Error al cargar la imagen en Cloudinary:', error)
+    return NextResponse.json(
+      {
+        message: 'Error al cargar la imagen en Cloudinary',
+      },
+      { status: 500 }
+    )
   }
 }
